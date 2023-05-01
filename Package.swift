@@ -2,19 +2,28 @@
 import PackageDescription
 
 let package = Package(
-    name: "DiscordBotServer",
+    name: "vapor-discord",
     platforms: [
        .macOS(.v12)
+    ],
+    products: [
+        .library(name: "Discord", targets: ["Discord"])
     ],
     dependencies: [
         // 💧 A server-side Swift web framework.
         .package(url: "https://github.com/vapor/vapor.git", from: "4.76.0"),
+        .package(url: "https://github.com/rawillk/vapor-bots.git", from: "0.1.0")
     ],
     targets: [
+        .target(name: "Discord", dependencies: [
+            .product(name: "Vapor", package: "vapor"),
+            .product(name: "Bots", package: "vapor-bots")
+        ]),
         .executableTarget(
-            name: "App",
+            name: "DiscordBotServer",
             dependencies: [
-                .product(name: "Vapor", package: "vapor")
+                .product(name: "Vapor", package: "vapor"),
+                .target(name: "Discord")
             ],
             swiftSettings: [
                 // Enable better optimizations when building in Release configuration. Despite the use of
@@ -22,10 +31,6 @@ let package = Package(
                 // builds. See <https://www.swift.org/server/guides/building.html#building-for-production> for details.
                 .unsafeFlags(["-cross-module-optimization"], .when(configuration: .release))
             ]
-        ),
-        .testTarget(name: "AppTests", dependencies: [
-            .target(name: "App"),
-            .product(name: "XCTVapor", package: "vapor"),
-        ])
+        )
     ]
 )

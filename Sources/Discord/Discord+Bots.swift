@@ -5,7 +5,7 @@ import Bots
 extension Bot: ChatBot {
     
     public convenience init(app: Application) {
-        self.init(client: app.client, provider: .shared(app.eventLoopGroup))
+        self.init(app)
     }
 }
 

@@ -3,7 +3,8 @@ import Vapor
 
 public final class Bot {
     
-    let client: Client
+    public let app: Application
+    public var client: Client { app.client }
     var socket: WebSocket?
     
     private let token = Environment.get("DISCORD_API_TOKEN")!
@@ -21,17 +22,11 @@ public final class Bot {
     }
     
     public init(
-        client: Client,
-        provider: Application.EventLoopGroupProvider = .createNew,
+        _ app: Application,
         factory: @escaping (Bot) -> [any Chat] = {_ in []}
     ) {
-        self.client = client
-        switch provider {
-        case .createNew:
-            eventLoopGroup = MultiThreadedEventLoopGroup(numberOfThreads: System.coreCount)
-        case .shared(let group):
-            eventLoopGroup = group
-        }
+        self.app = app
+        self.eventLoopGroup = app.eventLoopGroup
         chats = factory(self)
         startServer()
     }

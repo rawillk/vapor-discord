@@ -5,146 +5,69 @@ public final class Bot {
     
     public let app: Application
     public var client: Client { app.client }
-    var socket: WebSocket?
-    
-    private let token = Environment.get("DISCORD_API_TOKEN")!
-    private let appID = Environment.get("DISCORD_APP_ID")!
+    public var logger: Logger { app.logger }
+    public let gateway: Gateway
     
     private let api: API = .init()
-    private let decoder = JSONDecoder()
-    private let encoder = JSONEncoder()
-    
     private let eventLoopGroup: EventLoopGroup
-    private var chats: [any Chat] = []
+    private var chats: [any ChatSession] = []
     
     private var headers: HTTPHeaders {
-        ["Authorization": "Bot \(token)"]
+        ["Authorization": "Bot \(gateway.token)"]
     }
     
     public init(
         _ app: Application,
-        factory: @escaping (Bot) -> [any Chat] = {_ in []}
+        factory: @escaping (Bot) -> [any ChatSession] = {_ in []}
     ) {
         self.app = app
         self.eventLoopGroup = app.eventLoopGroup
+        self.gateway = .init(logger: app.logger, eventLoopGroup: app.eventLoopGroup)
         chats = factory(self)
-        startServer()
+        gateway.wss = getWss
+        gateway.onMessage = { [unowned self] message in
+            chats.forEach { chat in
+                chat.receive(message: message)
+            }
+        }
     }
     
-    deinit {
-        _ = socket?.close()
+    private func getWss() async throws -> String {
+        let result = try await client.get(api.gateway, headers: headers)
+        let wss = try result.content.decode(Gateway.WSS.self)
+        return api.wss(wss.url)
     }
     
-    public func register(_ facrory: @escaping (Bot) -> some Chat) {
+    public func register(_ facrory: @escaping (Bot) -> some ChatSession) {
         chats.append(facrory(self))
     }
     
     @discardableResult
-    public func register<C: Chat>(_ chat: C.Type) -> C {
+    public func register<C: ChatSession>(_ chat: C.Type) -> C {
         let chat = C.init(bot: self)
         chats.append(chat)
         return chat
     }
     
-    private func startServer() {
-        Task {
-            do {
-                let result = try await client.get(api.gateway, headers: headers)
-                let gat = try result.content.decode(Gateway.self)
-                try await WebSocket.connect(to: api.wss(gat.url), on: eventLoopGroup.next()) { [unowned self] ws in
-                    listen(socket: ws)
-                }
-            } catch {
-                print(error)
-            }
-        }
-    }
-    
-    private func listen(socket: WebSocket) {
-        self.socket = socket
-        socket.onText { [unowned self] ws, text in
-            handle(message: text)
-        }
-    }
-    
-    private func scheduleHeartbeat(interval: Int64) {
-        eventLoopGroup.next().scheduleRepeatedTask(initialDelay: .zero, delay: .milliseconds(interval)) { [unowned self] task in
-            if let socket, socket.isClosed {
-                task.cancel()
-            } else {
-                send(.heartbit)
-            }
-        }
-    }
-    
-    private func send<D: Codable>(json: D, opcode: Opcode) {
-        let payload = Payload(op: opcode, t: nil, d: json)
-        do {
-            let data = try encoder.encode(payload)
-            socket?.send(raw: data, opcode: .binary)
-        } catch {
-            print(error)
-        }
-    }
-    
-    private func send(_ opcode: Opcode) {
-        let string = "{\"op\":\(opcode.rawValue),\"d\":null}"
-        socket?.send(string)
-    }
-    
-    private func handle(message: String) {
-        guard let data = message.data(using: .utf8) else { return }
-        do {
-            let status = try decoder.decode(Status.self, from: data)
-            try handle(status: status, data: data)
-        } catch {
-            print(error)
-            print(message)
-        }
-    }
-    
-    private func unwrap<D: Codable>(_ data: Data) throws -> D {
-        let payload = try decoder.decode(Payload<D>.self, from: data)
-        return payload.d
-    }
-    
-    private func handle(status: Status, data: Data) throws {
-        let opcode = status.op
-        switch status.op {
-        case .dispatch where status.t == .messageCreate:
-            let message: Message = try unwrap(data)
-            guard message.author.id != appID else { return }
-            chats.forEach { chat in
-                chat.receive(message: message)
-            }
-        case .dispatch:
-            throw Failure.noHandler(opcode)
-        case .heartbit:
-            send(.heartbit)
-        case .identify:
-            throw Failure.noHandler(opcode)
-        case .presenceUpdate:
-            throw Failure.noHandler(opcode)
-        case .voiceStateUpdate:
-            throw Failure.noHandler(opcode)
-        case .resume:
-            throw Failure.noHandler(opcode)
-        case .reconnect:
-            throw Failure.noHandler(opcode)
-        case .requestGuildMembers:
-            throw Failure.noHandler(opcode)
-        case .invalidSession:
-            throw Failure.noHandler(opcode)
-        case .hello:
-            let payload = try decoder.decode(Payload<Hello>.self, from: data)
-            scheduleHeartbeat(interval: payload.d.heartbeat_interval)
-            send(json: Identity(token: token), opcode: .identify)
-        case .heartbitACK:
-            print("heartbit")
-        }
-    }
-    
     public func send(message: Message.Out, channelId: String) async throws {
         let _ = try await client.post(api.messages(channelId), headers: headers, content: message)
+    }
+    
+    public func create(thread: Thread, channelId: String) async throws -> Channel {
+        let response = try await client.post(api.threads(channelId), headers: headers, content: thread)
+        return try response.content.decode(Channel.self)
+    }
+    
+    public func subsribe(member: String = "@me", to channel: String) async throws {
+        let _ = try await client.put(api.thread(member: member, channel), headers: headers)
+    }
+}
+
+extension ClientResponse {
+    func printBody() {
+        if let body {
+            let string = String(buffer: body)
+            print(string)
+        }
     }
 }

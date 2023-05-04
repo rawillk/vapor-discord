@@ -1,9 +1,8 @@
 
 import Vapor
 
-public protocol Chat {
+public protocol ChatSession {
     
     init(bot: Bot)
-    var bot: Bot { get }
     func receive(message: Message)
 }

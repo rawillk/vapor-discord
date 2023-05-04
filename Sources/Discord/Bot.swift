@@ -24,8 +24,14 @@ public final class Bot {
         self.eventLoopGroup = app.eventLoopGroup
         self.gateway = .init(logger: app.logger, eventLoopGroup: app.eventLoopGroup)
         chats = factory(self)
-        gateway.wss = getWss
-        gateway.onMessage = { [unowned self] message in
+        subscribe()
+    }
+    
+    private func subscribe() {
+        gateway.wss = { [unowned self] in
+            try await getWss()
+        }
+        gateway.on(.messageCreate) { [unowned self] (message: Message) in
             chats.forEach { chat in
                 chat.receive(message: message)
             }

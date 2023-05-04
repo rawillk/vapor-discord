@@ -27,6 +27,7 @@ public final class Gateway {
     private let decoder = JSONDecoder()
     private let encoder = JSONEncoder()
     private var intents: [Intent] = []
+    private var subscriptions: [PayloadType: any Sub] = [:]
     private var socket: WebSocket?
     
     func connect(with intents: [Intent] = .default) {
@@ -98,6 +99,7 @@ public final class Gateway {
             let message: Message = try unwrap(data)
             guard message.author.id != appID else { return }
             onMessage(message)
+            notify(.messageCreate, value: message)
         case .dispatch where status.t == .ready:
             logger.log(level: .info, "Discord Bot: Identity accepted")
         case .dispatch where status.t == .threadCreate:
@@ -131,6 +133,19 @@ public final class Gateway {
         }
     }
     
+    func on<Value>(_ payloadType: PayloadType, callback: @escaping (Value) -> Void) {
+        subscriptions[payloadType] = Subscriber(send: callback)
+    }
+    
+    private func notify<Value>(_ payloadType: PayloadType, value: Value) {
+        guard let sub = subscriptions[payloadType] as? Subscriber<Value> else { return }
+        sub.send(value)
+    }
+    
+    struct Subscriber<Value>: Sub {
+        let send: (Value) -> Void
+    }
+    
     struct Payload<D: Codable>: Codable {
         let op: Opcode
         let t: PayloadType?
@@ -155,4 +170,9 @@ public final class Gateway {
         case noHandler(Opcode)
         case wssEndpointNotReceived
     }
+}
+
+private protocol Sub<Value> {
+    associatedtype Value
+    var send: (Value) -> Void { get }
 }
